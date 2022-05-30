@@ -4,6 +4,7 @@ import "p5/lib/addons/p5.sound";
 import * as p5 from "p5";
 import { Midi } from '@tonejs/midi'
 import PlayIcon from './functions/PlayIcon.js';
+import ShuffleArray from './functions/ShuffleArray.js';
 import TetradicColourCalculator from './functions/TetradicColourCalculator.js';
 import Polygon from "./classes/Polygon";
 
@@ -27,13 +28,15 @@ const P5SketchWithAudio = () => {
 
         p.PPQ = 3840 * 4;
 
+        p.cueSet3Length = 0;
+
         p.loadMidi = () => {
             Midi.fromUrl(midi).then(
                 function(result) {
-                    console.log(result);
                     const noteSet1 = result.tracks[2].notes; // Sampler 1 - LeadSynthBass
                     const noteSet2 = result.tracks[3].notes; // Synth 1 - Elpiano
                     const noteSet3 = result.tracks[4].notes; // Synth 1 Copy - Gorgonzola
+                    p.cueSet3Length = noteSet3.length;
                     p.scheduleCueSet(noteSet1, 'executeCueSet1');
                     p.scheduleCueSet(noteSet2, 'executeCueSet2');
                     p.scheduleCueSet(noteSet3, 'executeCueSet3');
@@ -67,14 +70,19 @@ const P5SketchWithAudio = () => {
 
         p.polygons = [];
 
+        p.polygonPoints = [];
+
         p.numberOfSides = 6;
 
         p.baseColour = null;
 
         p.shapeColours = [];
 
+        p.graphicsBG = false;
+
         p.setup = () => {
             p.canvas = p.createCanvas(p.canvasWidth, p.canvasHeight);
+            p.backgroundCanvas = p.createGraphics(p.canvasWidth, p.canvasWidth);
             p.colorMode(p.HSB);
             p.angleMode(p.DEGREES);
             p.background(0);
@@ -84,12 +92,24 @@ const P5SketchWithAudio = () => {
         }
 
         p.draw = () => {
+            
             if(p.audioLoaded && p.song.isPlaying()){
-                p.background(p.baseColour);
+                if(p.graphicsBG){
+                    p.backgroundCanvas.background(p.baseColour);
+                    p.image(p.backgroundCanvas, 0, 0);
+                }
+                else {
+                    p.background(p.baseColour);
+                }
                 for (let i=0; i <p.polygons.length; i++){
-                    const polygon = p.polygons[i];
+                    const polygon = p.polygons[i],
+                        { timesToDraw } = polygon;
                     polygon.update();
-                    polygon.draw();
+                    let divisor = 1;
+                    for (let j = 0; j < timesToDraw; j++) {
+                        polygon.draw(divisor);
+                        divisor = divisor * 2;
+                    }
                 }
             }
         }
@@ -97,33 +117,62 @@ const P5SketchWithAudio = () => {
         p.executeCueSet1 = (note) => {
             const { currentCue } = note;
             if(currentCue % 10 === 1){
+                const possibleSides = [3, 4, 5, 6, 8, 12];
+                possibleSides.splice([3, 4, 5, 6, 8, 12].indexOf(p.numberOfSides), 1)
                 p.clear();
                 p.polygons = [];
-                p.numberOfSides = p.random([3, 4, 5, 6, 8, 12]);
+                p.polygonPoints = [];
+                p.numberOfSides = p.random(possibleSides);
                 p.shapeColours = TetradicColourCalculator(
                     p,
                     p.random(0, 360),
                     p.random(50, 100),
                     p.random(50, 100),
                 );
+
+                let xPoints = [],
+                    yPoints = [];
+
+                for (let i = 0; i < 10; i++) {
+                    const lowX = (p.width / 20) + (p.width / 10) * i,
+                        highX = (p.width / 20) + (p.width / 10) * i + 1,
+                        lowY = (p.height / 20) + (p.height / 10) * i,
+                        highY = (p.height / 20) + (p.height / 10) * i + 1;
+                    xPoints[i] = p.random(lowX, highX); 
+                    yPoints[i] = p.random(lowY, highY); 
+                }
+
+                xPoints = ShuffleArray(xPoints);
+                yPoints = ShuffleArray(yPoints);
+                for (let i = 0; i < 10; i++) {
+                    p.polygonPoints.push(
+                        {
+                            x: xPoints[i],
+                            y: yPoints[i],
+                        }
+                    );
+                }
             }
 
-            const colour = p.shapeColours.length
-                ? p.random(p.shapeColours)
-                : p.color(
-                    p.random(0, 360),
-                    p.random(50, 100),
-                    p.random(50, 100)
-                );
+            const point = p.polygonPoints[currentCue % 10],
+                speed = currentCue % 10 ? 1 + (currentCue % 10 / 8) : 10,
+                colour = p.shapeColours.length
+                    ? p.random(p.shapeColours)
+                    : p.color(
+                        p.random(0, 360),
+                        p.random(50, 100),
+                        p.random(50, 100)
+                    );
             p.polygons.push(
                 new Polygon(
                     p, 
-                    p.random(p.width),
-                    p.random(p.height),
+                    point.x,
+                    point.y,
                     colour,
+                    speed,
                     p.numberOfSides,
                 )
-            )
+            );
         }
 
         p.executeCueSet2 = (note) => {
@@ -139,10 +188,31 @@ const P5SketchWithAudio = () => {
         }
 
         p.executeCueSet3 = (note) => {
+            const { currentCue } = note,
+                glowColour = p.random(p.shapeColours).levels;
+            
+            if(currentCue > 5){
+                const cueFromPhraseStart = currentCue - 5,
+                polygonPointer = cueFromPhraseStart % 10 ? cueFromPhraseStart % 10 - 1 : p.polygons.length - 1,
+                currentPolygon = p.polygons[polygonPointer];
+                currentPolygon.timesToDraw = p.random([2,3,5]);
+                currentPolygon.points = p.random([3, 4, 5, 6, 7, 8, 12]);
+            }
+
+            if(currentCue > 25){
+                p.baseColour = p.color(0, 100, 0, 0.2);
+            }
             //glow
-            const glowColour = p.random(p.shapeColours).levels;
-            p.drawingContext.shadowBlur = 8;
+            p.graphicsBG = true;
+            p.drawingContext.shadowBlur = 32;
             p.drawingContext.shadowColor =  "#" + p.hex(glowColour[0],2) + p.hex(glowColour[1],2) + p.hex(glowColour[2],2);
+
+            if(p.cueSet3Length === currentCue) {
+                for (let i=0; i <p.polygons.length; i++){
+                    const polygon = p.polygons[i];
+                    polygon.canUpdate = false;
+                }
+            }
         }
     
         p.mousePressed = () => {
